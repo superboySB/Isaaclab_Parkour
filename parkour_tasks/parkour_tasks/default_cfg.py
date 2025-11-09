@@ -11,6 +11,7 @@ from isaaclab.sensors import RayCasterCameraCfg
 from isaaclab.sensors.ray_caster.patterns import PinholeCameraPatternCfg
 from isaaclab.envs import ViewerCfg
 import os, torch 
+from pathlib import Path
 from parkour_isaaclab.actuators.parkour_actuator_cfg import ParkourDCMotorCfg
 
 def quat_from_euler_xyz_tuple(roll: torch.Tensor, pitch: torch.Tensor, yaw: torch.Tensor) -> tuple:
@@ -61,6 +62,17 @@ class ParkourDefaultSceneCfg(InteractiveSceneCfg):
         debug_vis=False,
     )
     def __post_init__(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        local_go2_candidates = [
+            repo_root / "assets" / "nucleus" / "Isaac" / "4.5" / "Isaac" / "IsaacLab" / "Robots" / "Unitree" / "Go2" / "go2.usd",
+            repo_root / "assets" / "usd" / "go2.usd",
+        ]
+        for candidate in local_go2_candidates:
+            if candidate.exists():
+                self.robot.spawn.usd_path = candidate.as_posix()
+                break
+        else:
+            print("[WARN] Local Go2 USD not found under assets/. Falling back to default asset path (requires network).")
         self.robot.spawn.articulation_props.enabled_self_collisions = True
         self.robot.actuators['base_legs'] = ParkourDCMotorCfg(
             joint_names_expr=[".*_hip_joint", ".*_thigh_joint", ".*_calf_joint"],

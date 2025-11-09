@@ -11,7 +11,13 @@ git clone https://github.com/superboySB/Isaaclab_Parkour
 
 cd Isaaclab_Parkour && pip3 install -e .
 
+# 首次使用（或部署到离线服务器）时把 GO2 机器人完整资产拉到本地（只需执行一次），需要宿主机网络环境执行
+python scripts/tools/download_go2_assets.py
+
 cd parkour_tasks && pip3 install -e .
+```
+
+默认跳过已存在文件，如需重新下载可加 `--force`。下载完成后，`play/eval/demo/train` 都会自动引用本地 `assets/nucleus/Isaac/4.5/Isaac/IsaacLab/Robots/Unitree/Go2/` 目录，无需联网。
 ```
 
 ## 直接看预训练结果
