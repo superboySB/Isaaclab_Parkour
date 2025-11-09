@@ -8,7 +8,11 @@ import argparse
 import os
 import sys
 import weakref
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
+
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
 import cli_args  # isort: skip
 from isaaclab.app import AppLauncher
 
@@ -21,6 +25,12 @@ parser.add_argument(
 )
 parser.add_argument("--num_envs", type=int, default=1, help="Number of environments to simulate.")
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
+parser.add_argument(
+    "--log_root",
+    type=str,
+    default=None,
+    help="Optional absolute/relative path to the logs directory when loading checkpoints.",
+)
 parser.add_argument(
     "--use_pretrained_checkpoint",
     action="store_true",
@@ -53,30 +63,58 @@ from parkour_isaaclab.envs import (
 ParkourManagerBasedRLEnv
 )
 from isaaclab.utils.math import quat_apply
-from isaaclab.utils.pretrained_checkpoint import get_published_pretrained_checkpoint
 from isaaclab.utils.assets import retrieve_file_path
+from isaaclab.utils.pretrained_checkpoint import get_published_pretrained_checkpoint
 from isaaclab_tasks.utils import get_checkpoint_path
 from scripts.rsl_rl.vecenv_wrapper import ParkourRslRlVecEnvWrapper
 from parkour_tasks.extreme_parkour_task.config.go2.agents.parkour_rl_cfg import ParkourRslRlOnPolicyRunnerCfg
 
 from parkour_tasks.extreme_parkour_task.config.go2.parkour_teacher_cfg import UnitreeGo2TeacherParkourEnvCfg_PLAY
 from parkour_tasks.extreme_parkour_task.config.go2.parkour_student_cfg import UnitreeGo2StudentParkourEnvCfg_PLAY
+from scripts.rsl_rl.checkpoint_paths import get_local_pretrained_checkpoint
 
 class ParkourDemoGO2:
     def __init__(self):
         agent_cfg: ParkourRslRlOnPolicyRunnerCfg = cli_args.parse_rsl_rl_cfg(args_cli.task, args_cli)
-        log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
-        log_root_path = os.path.abspath(log_root_path)
+        if args_cli.log_root:
+            log_root_path = os.path.abspath(args_cli.log_root)
+        else:
+            log_root_path = os.path.abspath(os.path.join("logs", "rsl_rl", agent_cfg.experiment_name))
 
+        checkpoint = None
         if args_cli.use_pretrained_checkpoint:
-            checkpoint = get_published_pretrained_checkpoint("rsl_rl", args_cli.task)
-            if not checkpoint:
-                print("[INFO] Unfortunately a pre-trained checkpoint is currently unavailable for this task.")
-                return
+            checkpoint = get_local_pretrained_checkpoint(args_cli.task)
+            if checkpoint:
+                print(f"[INFO] Using local pre-trained checkpoint from assets: {checkpoint}")
+            else:
+                checkpoint = get_published_pretrained_checkpoint("rsl_rl", args_cli.task)
+                if not checkpoint:
+                    print("[INFO] Unfortunately a pre-trained checkpoint is currently unavailable for this task.")
+                    return
         elif args_cli.checkpoint:
             checkpoint = retrieve_file_path(args_cli.checkpoint)
         else:
-            checkpoint = get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
+            try:
+                checkpoint = get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
+            except (ValueError, FileNotFoundError) as exc:
+                print(f"[WARN] {exc}")
+                checkpoint = None
+
+            if not checkpoint or not os.path.exists(checkpoint):
+                local_path = get_local_pretrained_checkpoint(args_cli.task)
+                if local_path:
+                    checkpoint = local_path
+                    print(f"[INFO] Using checkpoint from assets: {checkpoint}")
+                else:
+                    print(
+                        "[ERROR] Could not resolve a checkpoint. "
+                        "Provide --checkpoint or place the pre-trained weights under assets/."
+                    )
+                    return
+
+        if not checkpoint or not os.path.exists(checkpoint):
+            print(f"[ERROR] Checkpoint path does not exist: {checkpoint}")
+            return
 
         self.agent_cfg = agent_cfg 
         # create envionrment

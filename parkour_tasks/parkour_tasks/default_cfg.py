@@ -114,7 +114,8 @@ CAMERA_USD_CFG = AssetBaseCfg(
     )
 )
 VIEWER = ViewerCfg(
-    eye=(-0., 2.6, 1.6),
-    asset_name = "robot",
-    origin_type = 'asset_root',
+    eye=(-2.0, 2.6, 1.8),
+    lookat=(0.0, 0.0, 0.8),
+    origin_type="world",
+    asset_name=None,
 )

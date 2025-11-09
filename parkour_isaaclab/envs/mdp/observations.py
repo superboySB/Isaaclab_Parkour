@@ -20,6 +20,10 @@ from parkour_isaaclab.envs.mdp.parkours import ParkourEvent
 from collections.abc import Sequence
 import numpy as np 
 import cv2
+import os
+import subprocess
+import atexit
+from pathlib import Path
 if TYPE_CHECKING:
     from parkour_isaaclab.envs import ParkourManagerBasedRLEnv
     from isaaclab.managers import ObservationTermCfg
@@ -154,6 +158,10 @@ class image_features(ManagerTermBase):
                                         self.buffer_len, 
                                         resized[0], 
                                         resized[1]).to(self.device)
+        self._debug_process = None
+        self._debug_pipe = None
+        self._debug_viewer_script = Path(__file__).resolve().parents[3] / "scripts" / "depth_debug_viewer.py"
+        atexit.register(self._close_debug_viewer)
 
     def reset(self, env_ids: Sequence[int] | None = None) -> None:
         if env_ids is None:
@@ -188,9 +196,8 @@ class image_features(ManagerTermBase):
                 row = np.hstack(depth_images_norm[i:i+ncols])  
                 rows.append(row)
 
-            grid_img = np.vstack(rows)   
-            cv2.imshow("depth_images_grid", grid_img)
-            cv2.waitKey(1)
+            grid_img = np.vstack(rows)
+            self._send_debug_image(grid_img)
         return self.depth_buffer[:, -2].to(env.device)
 
     def _process_depth_image(self, depth_image):
@@ -207,6 +214,63 @@ class image_features(ManagerTermBase):
         depth_image = depth_image  # make similiar to scandot 
         depth_image = (depth_image) / (self.clipping_range)  - 0.5
         return depth_image
+    
+    def _close_debug_viewer(self):
+        if self._debug_process:
+            try:
+                if self._debug_pipe:
+                    self._debug_pipe.close()
+            finally:
+                self._debug_process.terminate()
+                self._debug_process = None
+                self._debug_pipe = None
+
+    def _ensure_debug_viewer(self):
+        if self._debug_process and self._debug_process.poll() is None:
+            return True
+        python_cmd = os.environ.get("DEPTH_DEBUG_VIEWER_PYTHON", "python3")
+        if not self._debug_viewer_script.exists():
+            print(f"[WARN] Depth debug viewer script not found at {self._debug_viewer_script}. Disabling debug vis.")
+            self.debug_vis = False
+            return False
+        try:
+            self._debug_process = subprocess.Popen(
+                [python_cmd, "-u", str(self._debug_viewer_script)],
+                stdin=subprocess.PIPE,
+                bufsize=0,
+            )
+            self._debug_pipe = self._debug_process.stdin
+            return True
+        except OSError as exc:
+            print(f"[WARN] Failed to launch depth debug viewer: {exc}. Disabling debug vis.")
+            self.debug_vis = False
+            self._debug_process = None
+            self._debug_pipe = None
+            return False
+
+    def _send_debug_image(self, grid_img: np.ndarray):
+        if not self._ensure_debug_viewer():
+            return
+        grid_img = np.nan_to_num(grid_img)
+        img_min = grid_img.min()
+        img_max = grid_img.max()
+        denom = img_max - img_min
+        if denom <= 1e-6:
+            denom = 1.0
+        grid_img_norm = ((grid_img - img_min) / denom * 255.0).astype(np.uint8)
+        success, encoded = cv2.imencode(".png", grid_img_norm)
+        if not success:
+            return
+        data = encoded.tobytes()
+        length = len(data).to_bytes(4, byteorder="little", signed=False)
+        try:
+            self._debug_pipe.write(length)
+            self._debug_pipe.write(data)
+            self._debug_pipe.flush()
+        except (BrokenPipeError, OSError):
+            print("[WARN] Depth debug viewer closed unexpectedly. Disabling debug vis.")
+            self.debug_vis = False
+            self._close_debug_viewer()
     
 class obervation_delta_yaw_ok(ManagerTermBase):
 

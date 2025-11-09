@@ -8,6 +8,13 @@
 """Launch Isaac Sim Simulator first."""
 
 import argparse
+import os
+import sys
+
+# Ensure project root is on sys.path so that `scripts.*` imports work when running via `python scripts/...`
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 from isaaclab.app import AppLauncher
 
@@ -23,6 +30,12 @@ parser.add_argument(
 )
 parser.add_argument("--num_envs", type=int, default=1, help="Number of environments to simulate.")
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
+parser.add_argument(
+    "--log_root",
+    type=str,
+    default=None,
+    help="Optional absolute/relative path to the logs directory when loading checkpoints.",
+)
 parser.add_argument(
     "--use_pretrained_checkpoint",
     action="store_true",
@@ -45,7 +58,6 @@ simulation_app = app_launcher.app
 """Rest everything follows."""
 
 import gymnasium as gym
-import os
 import time
 import torch
 
@@ -63,6 +75,7 @@ export_teacher_policy_as_onnx,
 export_deploy_policy_as_jit, 
 export_deploy_policy_as_onnx,
 )
+from scripts.rsl_rl.checkpoint_paths import get_local_pretrained_checkpoint
 from scripts.rsl_rl.vecenv_wrapper import ParkourRslRlVecEnvWrapper
 
 import isaaclab_tasks  # noqa: F401
@@ -79,18 +92,45 @@ def main():
     agent_cfg: ParkourRslRlOnPolicyRunnerCfg = cli_args.parse_rsl_rl_cfg(args_cli.task, args_cli)
 
     # specify directory for logging experiments
-    log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
-    log_root_path = os.path.abspath(log_root_path)
+    if args_cli.log_root:
+        log_root_path = os.path.abspath(args_cli.log_root)
+    else:
+        log_root_path = os.path.abspath(os.path.join("logs", "rsl_rl", agent_cfg.experiment_name))
     print(f"[INFO] Loading experiment from directory: {log_root_path}")
+    resume_path = None
     if args_cli.use_pretrained_checkpoint:
-        resume_path = get_published_pretrained_checkpoint("rsl_rl", args_cli.task)
-        if not resume_path:
-            print("[INFO] Unfortunately a pre-trained checkpoint is currently unavailable for this task.")
-            return
+        resume_path = get_local_pretrained_checkpoint(args_cli.task)
+        if resume_path:
+            print(f"[INFO] Using local pre-trained checkpoint from assets: {resume_path}")
+        else:
+            resume_path = get_published_pretrained_checkpoint("rsl_rl", args_cli.task)
+            if not resume_path:
+                print("[INFO] Unfortunately a pre-trained checkpoint is currently unavailable for this task.")
+                return
     elif args_cli.checkpoint:
         resume_path = retrieve_file_path(args_cli.checkpoint)
     else:
-        resume_path = get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
+        try:
+            resume_path = get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
+        except (ValueError, FileNotFoundError) as exc:
+            print(f"[WARN] {exc}")
+            resume_path = None
+
+        if not resume_path or not os.path.exists(resume_path):
+            local_path = get_local_pretrained_checkpoint(args_cli.task)
+            if local_path:
+                resume_path = local_path
+                print(f"[INFO] Using checkpoint from assets: {resume_path}")
+            else:
+                print(
+                    "[ERROR] Could not resolve a checkpoint. "
+                    "Provide --checkpoint or download the pre-trained weights under assets/."
+                )
+                return
+
+    if not resume_path or not os.path.exists(resume_path):
+        print(f"[ERROR] Checkpoint path does not exist: {resume_path}")
+        return
 
     log_dir = os.path.dirname(resume_path)
 
