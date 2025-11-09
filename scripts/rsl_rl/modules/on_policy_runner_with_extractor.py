@@ -6,6 +6,7 @@ import statistics
 import time
 import torch
 from collections import deque
+from pathlib import Path
 
 import rsl_rl
 from rsl_rl.env import VecEnv
@@ -134,13 +135,14 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
             )
 
         self.disable_logs = self.is_distributed and self.gpu_global_rank != 0
+        self.enable_git_state = os.environ.get("ISAACLAB_ENABLE_GIT_STATE", "0").lower() in {"1", "true", "yes"}
         # Logging
         self.log_dir = log_dir
         self.writer = None
         self.tot_timesteps = 0
         self.tot_time = 0
         self.current_learning_iteration = 0
-        self.git_status_repos = [rsl_rl.__file__]
+        self.git_status_repos = [Path(rsl_rl.__file__).resolve()] if self.enable_git_state else []
 
     def learn_rl(self, num_learning_iterations: int, init_at_random_ep_len: bool = False):  # noqa: C901
         # initialize writer
@@ -288,7 +290,7 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
             # Clear episode infos
             ep_infos.clear()
             # Save code state
-            if it == start_iter and not self.disable_logs:
+            if self.enable_git_state and it == start_iter and not self.disable_logs:
                 # obtain all the diff files
                 git_file_paths = store_code_state(self.log_dir, self.git_status_repos)
                 # if possible store them to wandb
@@ -299,6 +301,11 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
         # Save the final model after training
         if self.log_dir is not None and not self.disable_logs:
             self.save(os.path.join(self.log_dir, f"model_{self.current_learning_iteration}.pt"))
+
+    def add_git_repo_to_log(self, file_path: str):
+        if not self.enable_git_state:
+            return
+        super().add_git_repo_to_log(file_path)
 
     def learn_vision(self, num_learning_iterations, init_at_random_ep_len=False):
         if not isinstance(self.alg, DistillationWithExtractor):
@@ -420,7 +427,7 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
             # Clear episode infos
             ep_infos.clear()
             # Save code state
-            if it == start_iter and not self.disable_logs:
+            if self.enable_git_state and it == start_iter and not self.disable_logs:
                 # obtain all the diff files
                 git_file_paths = store_code_state(self.log_dir, self.git_status_repos)
                 # if possible store them to wandb

@@ -1,4 +1,5 @@
-assets/
+assets/pretrained_student
+assets/pretrained_teacher
 
 # Python
 .DS_Store
@@ -8,3 +9,7 @@ assets/
 **/*.pyc
 **/*.pb
 utils/random/*
+
+
+outputs/
+logs/
