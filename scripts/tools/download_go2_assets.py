@@ -16,7 +16,12 @@ from pathlib import Path
 
 
 BASE_URL = "https://omniverse-content-production.s3-us-west-2.amazonaws.com"
-PREFIX = "Assets/Isaac/4.5/Isaac/IsaacLab/Robots/Unitree/Go2/"
+ASSET_PREFIXES = {
+    "go2": "Assets/Isaac/4.5/Isaac/IsaacLab/Robots/Unitree/Go2/",
+    "skybox": "Assets/Isaac/4.5/Isaac/Materials/Textures/Skies/PolyHaven/kloofendal_43d_clear_puresky_4k",
+    "tiles_marble": "Assets/Isaac/4.5/Isaac/IsaacLab/Materials/TilesMarbleSpiderWhiteBrickBondHoned/",
+    "ui_elements": "Assets/Isaac/4.5/Isaac/Props/UIElements/",
+}
 XML_NS = {"s3": "http://s3.amazonaws.com/doc/2006-03-01/"}
 
 
@@ -64,7 +69,7 @@ def download_key(key: str, output_root: Path, force: bool = False):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Download the Unitree Go2 USD and associated resources for offline use."
+        description="Download the Unitree Go2 USD and supporting assets (sky textures, materials, UI arrows) for offline use."
     )
     parser.add_argument(
         "--output",
@@ -77,11 +82,21 @@ def main():
         action="store_true",
         help="Re-download files even if they already exist locally.",
     )
+    parser.add_argument(
+        "--assets",
+        nargs="+",
+        choices=sorted(ASSET_PREFIXES.keys()),
+        default=sorted(ASSET_PREFIXES.keys()),
+        help="Subset of asset groups to download. Defaults to all.",
+    )
     args = parser.parse_args()
 
     try:
-        for key in list_objects(PREFIX):
-            download_key(key, args.output, force=args.force)
+        for asset_name in args.assets:
+            prefix = ASSET_PREFIXES[asset_name]
+            print(f"[INFO] Downloading asset group '{asset_name}' (prefix: {prefix})")
+            for key in list_objects(prefix):
+                download_key(key, args.output, force=args.force)
     except KeyboardInterrupt:
         print("\n[INFO] Download interrupted by user.", file=sys.stderr)
         sys.exit(1)

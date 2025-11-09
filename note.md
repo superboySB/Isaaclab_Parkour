@@ -11,7 +11,7 @@ git clone https://github.com/superboySB/Isaaclab_Parkour
 
 cd Isaaclab_Parkour && pip3 install -e .
 
-# 首次使用（或部署到离线服务器）时把 GO2 机器人完整资产拉到本地（只需执行一次），需要宿主机网络环境执行
+# 首次使用（或部署到离线服务器）时把 GO2 机器人完整资产（含天空 HDR、瓷砖材质、UI Arrow 等）拉到本地，需在可联网环境执行一次
 python scripts/tools/download_go2_assets.py
 
 cd parkour_tasks && pip3 install -e .

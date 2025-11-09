@@ -63,9 +63,10 @@ class ParkourDefaultSceneCfg(InteractiveSceneCfg):
     )
     def __post_init__(self):
         repo_root = Path(__file__).resolve().parents[2]
+        local_asset_root = repo_root / "assets" / "nucleus" / "Isaac" / "4.5" / "Isaac"
+
         local_go2_candidates = [
-            repo_root / "assets" / "nucleus" / "Isaac" / "4.5" / "Isaac" / "IsaacLab" / "Robots" / "Unitree" / "Go2" / "go2.usd",
-            repo_root / "assets" / "usd" / "go2.usd",
+            local_asset_root / "IsaacLab" / "Robots" / "Unitree" / "Go2" / "go2.usd",
         ]
         for candidate in local_go2_candidates:
             if candidate.exists():
@@ -73,6 +74,40 @@ class ParkourDefaultSceneCfg(InteractiveSceneCfg):
                 break
         else:
             print("[WARN] Local Go2 USD not found under assets/. Falling back to default asset path (requires network).")
+        sky_tex = local_asset_root / "Materials" / "Textures" / "Skies" / "PolyHaven" / "kloofendal_43d_clear_puresky_4k.hdr"
+        if sky_tex.exists():
+            self.sky_light.spawn.texture_file = sky_tex.as_posix()
+
+        marble_mdl = (
+            local_asset_root
+            / "IsaacLab"
+            / "Materials"
+            / "TilesMarbleSpiderWhiteBrickBondHoned"
+            / "TilesMarbleSpiderWhiteBrickBondHoned.mdl"
+        )
+        if marble_mdl.exists():
+            self.terrain.visual_material.mdl_path = marble_mdl.as_posix()
+
+        arrow_usd = local_asset_root / "Props" / "UIElements" / "arrow_x.usd"
+        if arrow_usd.exists():
+            arrow_path = arrow_usd.as_posix()
+            try:
+                from isaaclab.markers.config import (
+                    BLUE_ARROW_X_MARKER_CFG,
+                    FRAME_MARKER_CFG,
+                    GREEN_ARROW_X_MARKER_CFG,
+                    RED_ARROW_X_MARKER_CFG,
+                )
+
+                for marker_cfg in (GREEN_ARROW_X_MARKER_CFG, BLUE_ARROW_X_MARKER_CFG, RED_ARROW_X_MARKER_CFG):
+                    marker_cfg.markers["arrow"].usd_path = arrow_path
+                if "frame" in FRAME_MARKER_CFG.markers:
+                    frame_usd = local_asset_root / "Props" / "UIElements" / "frame_prim.usd"
+                    if frame_usd.exists():
+                        FRAME_MARKER_CFG.markers["frame"].usd_path = frame_usd.as_posix()
+            except ImportError:
+                pass
+
         self.robot.spawn.articulation_props.enabled_self_collisions = True
         self.robot.actuators['base_legs'] = ParkourDCMotorCfg(
             joint_names_expr=[".*_hip_joint", ".*_thigh_joint", ".*_calf_joint"],
@@ -131,3 +166,32 @@ VIEWER = ViewerCfg(
     origin_type="world",
     asset_name=None,
 )
+
+
+def apply_local_visualizers(env_cfg):
+    """Override debug visualizer assets (arrows) to use local USDs if available."""
+    repo_root = Path(__file__).resolve().parents[2]
+    arrow_usd = (
+        repo_root / "assets" / "nucleus" / "Isaac" / "4.5" / "Isaac" / "Props" / "UIElements" / "arrow_x.usd"
+    )
+    if not arrow_usd.exists():
+        return
+    arrow_path = arrow_usd.as_posix()
+
+    def _patch(markers_cfg):
+        if markers_cfg and hasattr(markers_cfg, "markers") and "arrow" in markers_cfg.markers:
+            markers_cfg.markers["arrow"].usd_path = arrow_path
+
+    commands_cfg = getattr(env_cfg, "commands", None)
+    if commands_cfg:
+        base_cmd = getattr(commands_cfg, "base_velocity", None)
+        if base_cmd:
+            _patch(getattr(base_cmd, "goal_vel_visualizer_cfg", None))
+            _patch(getattr(base_cmd, "current_vel_visualizer_cfg", None))
+
+    parkours_cfg = getattr(env_cfg, "parkours", None)
+    if parkours_cfg:
+        base_parkour = getattr(parkours_cfg, "base_parkour", None)
+        if base_parkour:
+            for attr in ("future_arrow_visualizer_cfg", "current_arrow_visualizer_cfg"):
+                _patch(getattr(base_parkour, attr, None))

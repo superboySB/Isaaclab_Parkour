@@ -7,7 +7,7 @@ from isaaclab.utils import configclass
 from parkour_isaaclab.terrains.extreme_parkour.config.parkour import EXTREME_PARKOUR_TERRAINS_CFG  # isort: skip
 from parkour_isaaclab.envs import ParkourManagerBasedRLEnvCfg
 from .parkour_mdp_cfg import * 
-from parkour_tasks.default_cfg import ParkourDefaultSceneCfg, VIEWER
+from parkour_tasks.default_cfg import ParkourDefaultSceneCfg, VIEWER, apply_local_visualizers
 
 @configclass
 class ParkourTeacherSceneCfg(ParkourDefaultSceneCfg):
@@ -59,6 +59,7 @@ class UnitreeGo2TeacherParkourEnvCfg(ParkourManagerBasedRLEnvCfg):
         self.actions.joint_pos.use_delay = False
         self.actions.joint_pos.history_length = 1
         self.events.random_camera_position = None
+        apply_local_visualizers(self)
 
 @configclass
 class UnitreeGo2TeacherParkourEnvCfg_EVAL(UnitreeGo2TeacherParkourEnvCfg):
@@ -106,5 +107,4 @@ class UnitreeGo2TeacherParkourEnvCfg_PLAY(UnitreeGo2TeacherParkourEnvCfg_EVAL):
             else:
                 sub_terrain.proportion = 0.2
                 sub_terrain.noise_range = (0.02, 0.02)
-
 
