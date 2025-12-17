@@ -1,7 +1,6 @@
 
 from __future__ import annotations
 
-import inspect
 import os
 import statistics
 import time
@@ -14,6 +13,7 @@ from rsl_rl.env import VecEnv
 from rsl_rl.modules import (
     EmpiricalNormalization,
 )
+from tensordict import TensorDict
 from .actor_critic_with_encoder import ActorCriticRMA
 from rsl_rl.utils import store_code_state
 from rsl_rl.runners.on_policy_runner import OnPolicyRunner
@@ -125,47 +125,9 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
             self.obs_normalizer = torch.nn.Identity().to(self.device)  # no normalization
             self.privileged_obs_normalizer = torch.nn.Identity().to(self.device)  # no normalization
         if self.depth_encoder_cfg is None:
-            init_storage = self.alg.init_storage
-            try:
-                init_storage_sig = inspect.signature(init_storage)
-            except (TypeError, ValueError):
-                init_storage_sig = None
-
             rollout_obs = extras.get("observations", {"policy": obs})
             actions_shape = [self.env.num_actions]
-
-            # rsl_rl API compatibility across Isaac Lab 4.5 → 5.1:
-            # - legacy (shapes): init_storage([training_type], num_envs, num_transitions_per_env, obs_shape, [privileged_obs_shape], actions_shape)
-            # - current (dict):  init_storage(training_type, num_envs, num_transitions_per_env, obs, actions_shape) where obs is a dict/TensorDict.
-            candidate_args_list = [
-                # Isaac Lab 5.x (dict/TensorDict observations)
-                (self.training_type, self.env.num_envs, self.num_steps_per_env, rollout_obs, actions_shape),
-                # Some older forks don't have training_type in signature but still use dict obs.
-                (self.env.num_envs, self.num_steps_per_env, rollout_obs, actions_shape),
-                # Isaac Lab 4.x / legacy RSL-RL (shape-based)
-                (self.training_type, self.env.num_envs, self.num_steps_per_env, [num_obs], [num_privileged_obs], actions_shape),
-                (self.env.num_envs, self.num_steps_per_env, [num_obs], [num_privileged_obs], actions_shape),
-                # Fallbacks without privileged observations
-                (self.training_type, self.env.num_envs, self.num_steps_per_env, [num_obs], actions_shape),
-                (self.env.num_envs, self.num_steps_per_env, [num_obs], actions_shape),
-            ]
-
-            last_exc: Exception | None = None
-            for candidate_args in candidate_args_list:
-                if init_storage_sig is not None:
-                    try:
-                        init_storage_sig.bind(*candidate_args)
-                    except TypeError:
-                        continue
-                try:
-                    init_storage(*candidate_args)
-                    last_exc = None
-                    break
-                except (TypeError, AttributeError) as exc:
-                    last_exc = exc
-            else:
-                msg = "Failed to call rsl_rl PPO.init_storage() with a compatible signature."
-                raise TypeError(msg) from last_exc
+            self.alg.init_storage(self.training_type, self.env.num_envs, self.num_steps_per_env, rollout_obs, actions_shape)
 
         self.disable_logs = self.is_distributed and self.gpu_global_rank != 0
         self.enable_git_state = os.environ.get("ISAACLAB_ENABLE_GIT_STATE", "0").lower() in {"1", "true", "yes"}
@@ -210,8 +172,17 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
 
         # start learning
         obs, extras = self.env.get_observations()
-        privileged_obs = extras["observations"].get(self.privileged_obs_type, obs)
-        obs, privileged_obs = obs.to(self.device), privileged_obs.to(self.device)
+        obs_dict = extras.get("observations", {"policy": obs})
+        obs_td = TensorDict(obs_dict, batch_size=[self.env.num_envs]).to(self.device)
+        # perform normalization
+        obs_td["policy"] = self.obs_normalizer(obs_td["policy"])
+        if self.privileged_obs_type is not None and self.privileged_obs_type in obs_td.keys():
+            obs_td[self.privileged_obs_type] = self.privileged_obs_normalizer(obs_td[self.privileged_obs_type])
+        privileged_obs = (
+            obs_td[self.privileged_obs_type]
+            if self.privileged_obs_type is not None and self.privileged_obs_type in obs_td.keys()
+            else obs_td["policy"]
+        )
         self.train_mode()  # switch to train mode (for dropout for example)
 
         # Book keeping
@@ -246,22 +217,29 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
             with torch.inference_mode():
                 for _ in range(self.num_steps_per_env):
                     # Sample actions
-                    actions = self.alg.act(obs, privileged_obs, hist_encoding)
+                    actions = self.alg.act(obs_td, hist_encoding=hist_encoding)
                     # Step the environment
                     obs, rewards, dones, infos = self.env.step(actions.to(self.env.device))
                     # Move to device
-                    obs, rewards, dones = (obs.to(self.device), rewards.to(self.device), dones.to(self.device))
+                    rewards, dones = (rewards.to(self.device), dones.to(self.device))
                     # perform normalization
-                    obs = self.obs_normalizer(obs)
-                    if self.privileged_obs_type is not None:
-                        privileged_obs = self.privileged_obs_normalizer(
-                            infos["observations"][self.privileged_obs_type].to(self.device)
+                    next_obs_td = TensorDict(infos.get("observations", {"policy": obs}), batch_size=[self.env.num_envs]).to(
+                        self.device
+                    )
+                    next_obs_td["policy"] = self.obs_normalizer(next_obs_td["policy"])
+                    if self.privileged_obs_type is not None and self.privileged_obs_type in next_obs_td.keys():
+                        next_obs_td[self.privileged_obs_type] = self.privileged_obs_normalizer(
+                            next_obs_td[self.privileged_obs_type]
                         )
-                    else:
-                        privileged_obs = obs
+                    privileged_obs = (
+                        next_obs_td[self.privileged_obs_type]
+                        if self.privileged_obs_type is not None and self.privileged_obs_type in next_obs_td.keys()
+                        else next_obs_td["policy"]
+                    )
 
                     # process the step
-                    self.alg.process_env_step(rewards, dones, infos)
+                    self.alg.process_env_step(next_obs_td, rewards, dones, infos)
+                    obs_td = next_obs_td
 
                     # Extract intrinsic rewards (only for logging)
                     intrinsic_rewards = self.alg.intrinsic_rewards if self.alg.rnd else None

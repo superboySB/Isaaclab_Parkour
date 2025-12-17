@@ -5,8 +5,6 @@
 ## 配置
 在zuanfeng项目的docker内部安装一波环境吧
 ```sh
-cd /workspace/isaaclab
-
 git clone https://github.com/superboySB/Isaaclab_Parkour
 
 cd Isaaclab_Parkour && pip3 install -e .
@@ -71,7 +69,7 @@ python scripts/rsl_rl/demo.py --task Isaac-Extreme-Parkour-Student-Unitree-Go2-P
      --task Isaac-Extreme-Parkour-Student-Unitree-Go2-v0 \
      --seed 1 --headless \
      --run_name student_seed1 \
-     --checkpoint /workspace/isaaclab/Isaaclab_Parkour/assets/pretrained_teacher/model_49999.pt
+     --checkpoint /workspace/Isaaclab_Parkour/assets/pretrained_teacher/model_49999.pt
    ```  
    - 现在可以直接把老师 `model_*.pt` 的绝对路径传给 `--checkpoint`，脚本会自动判定并加载，不再强制要求 `--load_run`。如果仍想用旧方式指定目录，也可以保留 `--load_run` + `--checkpoint model_50000.pt` 的组合。  
    - 学生配置的算法是 `DistillationWithExtractor`，`train.py` 会在启动新日志前先加载这个老师 checkpoint，然后再开始学生训练。后续学生的 checkpoint 同样写到 `logs/rsl_rl/unitree_go2_parkour/<timestamp>_student_seed1/model_*.pt`。

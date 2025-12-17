@@ -4,6 +4,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from tensordict import TensorDict, TensorDictBase
 
 from .actor_critic_with_encoder import ActorCriticRMA
 from rsl_rl.algorithms import PPO
@@ -75,27 +76,77 @@ class PPOWithExtractor(PPO):
         self.counter = 0
 
 
-    def act(self, obs, critic_obs, hist_encoding=False):
+    def act(self, obs, critic_obs=None, hist_encoding: bool = False):
+        if isinstance(obs, TensorDictBase):
+            actor_obs = obs.get("policy")
+            if actor_obs is None:
+                actor_obs = next(iter(obs.values()))
+            if critic_obs is None:
+                critic_obs = obs.get("critic", actor_obs)
+        else:
+            actor_obs = obs
+            if critic_obs is None:
+                critic_obs = actor_obs
+
         if self.policy.is_recurrent:
             self.transition.hidden_states = self.policy.get_hidden_states()
         # compute the actions and values
         if self.train_with_estimated_states:
-            obs_est = obs.clone()
+            obs_est = actor_obs.clone()
             priv_states_estimated = self.estimator(obs_est[:, :self.num_prop])
             obs_est[:, self.num_prop+self.num_scan:self.num_prop+self.num_scan+self.priv_states_dim] = priv_states_estimated
             self.transition.actions = self.policy.act(obs_est, hist_encoding).detach()
         else:
-            self.transition.actions = self.policy.act(obs, hist_encoding).detach()
+            self.transition.actions = self.policy.act(actor_obs, hist_encoding).detach()
 
         self.transition.values = self.policy.evaluate(critic_obs).detach()
         self.transition.actions_log_prob = self.policy.get_actions_log_prob(self.transition.actions).detach()
         self.transition.action_mean = self.policy.action_mean.detach()
         self.transition.action_sigma = self.policy.action_std.detach()
-        # need to record obs and critic_obs before env.step()
-        self.transition.observations = obs
-        self.transition.privileged_observations = critic_obs
+        # need to record observations before env.step()
+        if isinstance(obs, TensorDictBase):
+            self.transition.observations = obs
+        else:
+            self.transition.observations = TensorDict({"policy": actor_obs}, batch_size=[actor_obs.shape[0]])
 
         return self.transition.actions
+
+    def process_env_step(self, obs, rewards, dones, extras):
+        # Record the rewards and dones
+        # Note: we clone here because later on we bootstrap the rewards based on timeouts
+        self.transition.rewards = rewards.clone()
+        self.transition.dones = dones
+
+        # Compute the intrinsic rewards and add to extrinsic rewards
+        if self.rnd:
+            self.intrinsic_rewards = self.rnd.get_intrinsic_reward(obs)
+            self.transition.rewards += self.intrinsic_rewards
+
+        # Bootstrapping on time outs
+        if "time_outs" in extras:
+            self.transition.rewards += self.gamma * torch.squeeze(
+                self.transition.values * extras["time_outs"].unsqueeze(1).to(self.device), 1
+            )
+
+        # record the transition
+        self.storage.add_transitions(self.transition)
+        self.transition.clear()
+        self.policy.reset(dones)
+
+    def compute_returns(self, obs):
+        if isinstance(obs, TensorDictBase):
+            critic_obs = obs.get("critic")
+            if critic_obs is None:
+                critic_obs = obs.get("policy")
+            if critic_obs is None:
+                critic_obs = next(iter(obs.values()))
+        else:
+            critic_obs = obs
+
+        last_values = self.policy.evaluate(critic_obs).detach()
+        self.storage.compute_returns(
+            last_values, self.gamma, self.lam, normalize_advantage=not self.normalize_advantage_per_mini_batch
+        )
     
 
     def update(self):  # noqa: C901
@@ -124,7 +175,6 @@ class PPOWithExtractor(PPO):
         # iterate over batches
         for (
             obs_batch,
-            critic_obs_batch,
             actions_batch,
             target_values_batch,
             advantages_batch,
@@ -134,14 +184,23 @@ class PPOWithExtractor(PPO):
             old_sigma_batch,
             hid_states_batch,
             masks_batch,
-            rnd_state_batch,
         ) in generator:
+            if isinstance(obs_batch, TensorDictBase):
+                actor_obs_batch = obs_batch.get("policy")
+                if actor_obs_batch is None:
+                    actor_obs_batch = next(iter(obs_batch.values()))
+                critic_obs_batch = obs_batch.get("critic", actor_obs_batch)
+                rnd_state_batch = obs_batch.get("rnd_state") if self.rnd else None
+            else:
+                actor_obs_batch = obs_batch
+                critic_obs_batch = actor_obs_batch
+                rnd_state_batch = None
 
             # number of augmentations per sample
             # we start with 1 and increase it if we use symmetry augmentation
             num_aug = 1
             # original batch size
-            original_batch_size = obs_batch.shape[0]
+            original_batch_size = actor_obs_batch.shape[0]
 
             # check if we should normalize advantages per mini batch
             if self.normalize_advantage_per_mini_batch:
@@ -153,14 +212,14 @@ class PPOWithExtractor(PPO):
                 # augmentation using symmetry
                 data_augmentation_func = self.symmetry["data_augmentation_func"]
                 # returned shape: [batch_size * num_aug, ...]
-                obs_batch, actions_batch = data_augmentation_func(
-                    obs=obs_batch, actions=actions_batch, env=self.symmetry["_env"], obs_type="policy"
+                actor_obs_batch, actions_batch = data_augmentation_func(
+                    obs=actor_obs_batch, actions=actions_batch, env=self.symmetry["_env"], obs_type="policy"
                 )
                 critic_obs_batch, _ = data_augmentation_func(
                     obs=critic_obs_batch, actions=None, env=self.symmetry["_env"], obs_type="critic"
                 )
                 # compute number of augmentations per sample
-                num_aug = int(obs_batch.shape[0] / original_batch_size)
+                num_aug = int(actor_obs_batch.shape[0] / original_batch_size)
                 # repeat the rest of the batch
                 # -- actor
                 old_actions_log_prob_batch = old_actions_log_prob_batch.repeat(num_aug, 1)
@@ -172,7 +231,7 @@ class PPOWithExtractor(PPO):
             # Recompute actions log prob and entropy for current batch of transitions
             # Note: we need to do this because we updated the policy with the new parameters
             # -- actor
-            self.policy.act(obs_batch, masks=masks_batch, hidden_states=hid_states_batch[0])
+            self.policy.act(actor_obs_batch, masks=masks_batch, hidden_states=hid_states_batch[0])
             actions_log_prob_batch = self.policy.get_actions_log_prob(actions_batch)
             # -- critic
             value_batch = self.policy.evaluate(critic_obs_batch, masks=masks_batch, hidden_states=hid_states_batch[1])
@@ -180,16 +239,23 @@ class PPOWithExtractor(PPO):
             sigma_batch = self.policy.action_std[:original_batch_size]
             entropy_batch = self.policy.entropy[:original_batch_size]
 
-            priv_latent_batch = self.policy.actor.infer_priv_latent(obs_batch)
+            priv_latent_batch = self.policy.actor.infer_priv_latent(actor_obs_batch)
             with torch.inference_mode():
-                hist_latent_batch = self.policy.actor.infer_hist_latent(obs_batch)
+                hist_latent_batch = self.policy.actor.infer_hist_latent(actor_obs_batch)
             priv_reg_loss = (priv_latent_batch - hist_latent_batch.detach()).norm(p=2, dim=1).mean()
             priv_reg_stage = min(max((self.counter - self.priv_reg_coef_schedual[2]), 0) / self.priv_reg_coef_schedual[3], 1)
             priv_reg_coef = priv_reg_stage * (self.priv_reg_coef_schedual[1] - self.priv_reg_coef_schedual[0]) + self.priv_reg_coef_schedual[0]
 
             # Estimator
-            priv_states_predicted = self.estimator(obs_batch[:, :self.num_prop])  # obs in batch is with true priv_states
-            estimator_loss = (priv_states_predicted - obs_batch[:, self.num_prop+self.num_scan:self.num_prop+self.num_scan+self.priv_states_dim]).pow(2).mean()
+            priv_states_predicted = self.estimator(
+                actor_obs_batch[:, :self.num_prop]
+            )  # obs in batch is with true priv_states
+            estimator_loss = (
+                priv_states_predicted
+                - actor_obs_batch[
+                    :, self.num_prop + self.num_scan : self.num_prop + self.num_scan + self.priv_states_dim
+                ]
+            ).pow(2).mean()
             self.estimator_optimizer.zero_grad()
             estimator_loss.backward()
             nn.utils.clip_grad_norm_(self.estimator.parameters(), self.max_grad_norm)
@@ -262,14 +328,14 @@ class PPOWithExtractor(PPO):
                 # if we did augmentation before then we don't need to augment again
                 if not self.symmetry["use_data_augmentation"]:
                     data_augmentation_func = self.symmetry["data_augmentation_func"]
-                    obs_batch, _ = data_augmentation_func(
-                        obs=obs_batch, actions=None, env=self.symmetry["_env"], obs_type="policy"
+                    actor_obs_batch, _ = data_augmentation_func(
+                        obs=actor_obs_batch, actions=None, env=self.symmetry["_env"], obs_type="policy"
                     )
                     # compute number of augmentations per sample
-                    num_aug = int(obs_batch.shape[0] / original_batch_size)
+                    num_aug = int(actor_obs_batch.shape[0] / original_batch_size)
 
                 # actions predicted by the actor for symmetrically-augmented observations
-                mean_actions_batch = self.policy.act_inference(obs_batch.detach().clone())
+                mean_actions_batch = self.policy.act_inference(actor_obs_batch.detach().clone())
 
                 # compute the symmetrically augmented actions
                 # note: we are assuming the first augmentation is the original one.
@@ -293,6 +359,8 @@ class PPOWithExtractor(PPO):
 
             # Random Network Distillation loss
             if self.rnd:
+                if rnd_state_batch is None:
+                    raise RuntimeError("RND is enabled but 'rnd_state' was not found in observations.")
                 # predict the embedding and the target
                 predicted_embedding = self.rnd.predictor(rnd_state_batch)
                 target_embedding = self.rnd.target(rnd_state_batch).detach()
@@ -369,7 +437,6 @@ class PPOWithExtractor(PPO):
             generator = self.storage.mini_batch_generator(self.num_mini_batches, self.num_learning_epochs)
         for (
             obs_batch,
-            critic_obs_batch,
             actions_batch,
             target_values_batch,
             advantages_batch,
@@ -379,18 +446,23 @@ class PPOWithExtractor(PPO):
             old_sigma_batch,
             hid_states_batch,
             masks_batch,
-            rnd_state_batch,
         ) in generator:
+            if isinstance(obs_batch, TensorDictBase):
+                actor_obs_batch = obs_batch.get("policy")
+                if actor_obs_batch is None:
+                    actor_obs_batch = next(iter(obs_batch.values()))
+            else:
+                actor_obs_batch = obs_batch
             with torch.inference_mode():
-                self.policy.act(obs_batch, 
+                self.policy.act(actor_obs_batch, 
                                 hist_encoding=True, 
                                 masks=masks_batch, 
                                 hidden_states=hid_states_batch[0])
 
             # Adaptation module update
             with torch.inference_mode():
-                priv_latent_batch = self.policy.actor.infer_priv_latent(obs_batch)
-            hist_latent_batch = self.policy.actor.infer_hist_latent(obs_batch)
+                priv_latent_batch = self.policy.actor.infer_priv_latent(actor_obs_batch)
+            hist_latent_batch = self.policy.actor.infer_hist_latent(actor_obs_batch)
             hist_latent_loss = (priv_latent_batch.detach() - hist_latent_batch).norm(p=2, dim=1).mean()
             self.hist_encoder_optimizer.zero_grad()
             hist_latent_loss.backward()
