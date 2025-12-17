@@ -21,6 +21,7 @@ from collections.abc import Sequence
 import numpy as np 
 import cv2
 import os
+import sys
 import subprocess
 import atexit
 from pathlib import Path
@@ -228,7 +229,11 @@ class image_features(ManagerTermBase):
     def _ensure_debug_viewer(self):
         if self._debug_process and self._debug_process.poll() is None:
             return True
-        python_cmd = os.environ.get("DEPTH_DEBUG_VIEWER_PYTHON", "python3")
+        python_cmd = os.environ.get("DEPTH_DEBUG_VIEWER_PYTHON") or sys.executable
+        popen_env = None
+        if python_cmd != sys.executable:
+            popen_env = os.environ.copy()
+            popen_env.pop("PYTHONPATH", None)
         if not self._debug_viewer_script.exists():
             print(f"[WARN] Depth debug viewer script not found at {self._debug_viewer_script}. Disabling debug vis.")
             self.debug_vis = False
@@ -238,6 +243,7 @@ class image_features(ManagerTermBase):
                 [python_cmd, "-u", str(self._debug_viewer_script)],
                 stdin=subprocess.PIPE,
                 bufsize=0,
+                env=popen_env,
             )
             self._debug_pipe = self._debug_process.stdin
             return True
@@ -290,4 +296,4 @@ class obervation_delta_yaw_ok(ManagerTermBase):
             asset: Articulation = env.scene[asset_cfg.name]
             _, _, yaw = euler_xyz_from_quat(asset.data.root_quat_w)
             self.delta_yaw = parkour_event.target_yaw - wrap_to_pi(yaw)
-        return self.delta_yaw < threshold
+        return (self.delta_yaw < threshold).unsqueeze(-1)

@@ -31,7 +31,7 @@ parser.add_argument("--video_length", type=int, default=500, help="Length of the
 parser.add_argument(
     "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
 )
-parser.add_argument("--num_envs", type=int, default=1, help="Number of environments to simulate.")
+parser.add_argument("--num_envs", type=int, default=256, help="Number of environments to simulate.")
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument(
     "--log_root",
@@ -86,8 +86,6 @@ def main():
     if args_cli.task.find('Eval') == -1:
         print(f"[INFO] task argument must have 'Eval'")
         return 
-    if args_cli.num_envs != 256:
-        args_cli.num_envs = 256
     
     env_cfg = parse_env_cfg(
         args_cli.task, device=args_cli.device, num_envs=args_cli.num_envs, use_fabric=not args_cli.disable_fabric
@@ -242,11 +240,14 @@ def main():
 
     # # close the simulator
     env.close()
+    if len(rewbuffer) == 0:
+        print("[WARN] No completed episodes collected. Increase evaluation steps or number of environments.")
+        return
     rew_mean = statistics.mean(rewbuffer)
-    rew_std = statistics.stdev(rewbuffer)
+    rew_std = statistics.stdev(rewbuffer) if len(rewbuffer) > 1 else 0.0
 
     len_mean = statistics.mean(lenbuffer)
-    len_std = statistics.stdev(lenbuffer)
+    len_std = statistics.stdev(lenbuffer) if len(lenbuffer) > 1 else 0.0
 
     num_waypoints_mean = np.mean(np.array(num_waypoints_buffer).astype(float)/7.0)
     num_waypoints_std = np.std(np.array(num_waypoints_buffer).astype(float)/7.0)
@@ -254,10 +255,10 @@ def main():
     edge_violation_mean = np.mean(edge_violation_buffer)
     edge_violation_std = np.std(edge_violation_buffer)
 
-    print("Mean reward: {:.2f}$\pm${:.2f}".format(rew_mean, rew_std))
-    print("Mean episode length: {:.2f}$\pm${:.2f}".format(len_mean, len_std))
-    print("Mean number of waypoints: {:.2f}$\pm${:.2f}".format(num_waypoints_mean, num_waypoints_std))
-    print("Mean edge violation: {:.2f}$\pm${:.2f}".format(edge_violation_mean, edge_violation_std))
+    print("Mean reward: {:.2f}$\\pm${:.2f}".format(rew_mean, rew_std))
+    print("Mean episode length: {:.2f}$\\pm${:.2f}".format(len_mean, len_std))
+    print("Mean number of waypoints: {:.2f}$\\pm${:.2f}".format(num_waypoints_mean, num_waypoints_std))
+    print("Mean edge violation: {:.2f}$\\pm${:.2f}".format(edge_violation_mean, edge_violation_std))
 
 if __name__ == "__main__":
     # run the main function

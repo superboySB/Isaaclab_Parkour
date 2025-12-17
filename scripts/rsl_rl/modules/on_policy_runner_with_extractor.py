@@ -1,6 +1,7 @@
 
 from __future__ import annotations
 
+import inspect
 import os
 import statistics
 import time
@@ -124,15 +125,47 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
             self.obs_normalizer = torch.nn.Identity().to(self.device)  # no normalization
             self.privileged_obs_normalizer = torch.nn.Identity().to(self.device)  # no normalization
         if self.depth_encoder_cfg is None:
+            init_storage = self.alg.init_storage
+            try:
+                init_storage_sig = inspect.signature(init_storage)
+            except (TypeError, ValueError):
+                init_storage_sig = None
 
-            self.alg.init_storage(
-                self.training_type,
-                self.env.num_envs,
-                self.num_steps_per_env,
-                [num_obs],
-                [num_privileged_obs],
-                [self.env.num_actions],
-            )
+            rollout_obs = extras.get("observations", {"policy": obs})
+            actions_shape = [self.env.num_actions]
+
+            # rsl_rl API compatibility across Isaac Lab 4.5 → 5.1:
+            # - legacy (shapes): init_storage([training_type], num_envs, num_transitions_per_env, obs_shape, [privileged_obs_shape], actions_shape)
+            # - current (dict):  init_storage(training_type, num_envs, num_transitions_per_env, obs, actions_shape) where obs is a dict/TensorDict.
+            candidate_args_list = [
+                # Isaac Lab 5.x (dict/TensorDict observations)
+                (self.training_type, self.env.num_envs, self.num_steps_per_env, rollout_obs, actions_shape),
+                # Some older forks don't have training_type in signature but still use dict obs.
+                (self.env.num_envs, self.num_steps_per_env, rollout_obs, actions_shape),
+                # Isaac Lab 4.x / legacy RSL-RL (shape-based)
+                (self.training_type, self.env.num_envs, self.num_steps_per_env, [num_obs], [num_privileged_obs], actions_shape),
+                (self.env.num_envs, self.num_steps_per_env, [num_obs], [num_privileged_obs], actions_shape),
+                # Fallbacks without privileged observations
+                (self.training_type, self.env.num_envs, self.num_steps_per_env, [num_obs], actions_shape),
+                (self.env.num_envs, self.num_steps_per_env, [num_obs], actions_shape),
+            ]
+
+            last_exc: Exception | None = None
+            for candidate_args in candidate_args_list:
+                if init_storage_sig is not None:
+                    try:
+                        init_storage_sig.bind(*candidate_args)
+                    except TypeError:
+                        continue
+                try:
+                    init_storage(*candidate_args)
+                    last_exc = None
+                    break
+                except (TypeError, AttributeError) as exc:
+                    last_exc = exc
+            else:
+                msg = "Failed to call rsl_rl PPO.init_storage() with a compatible signature."
+                raise TypeError(msg) from last_exc
 
         self.disable_logs = self.is_distributed and self.gpu_global_rank != 0
         self.enable_git_state = os.environ.get("ISAACLAB_ENABLE_GIT_STATE", "0").lower() in {"1", "true", "yes"}
@@ -336,7 +369,7 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
 
         obs, extras = self.env.get_observations()
         additional_obs = {}
-        additional_obs["delta_yaw_ok"] = extras['observations']['delta_yaw_ok'].to(self.device)
+        additional_obs["delta_yaw_ok"] = extras["observations"]["delta_yaw_ok"].to(self.device).squeeze(-1)
         additional_obs["depth_camera"] = extras["observations"]['depth_camera'].to(self.device)
         obs = obs.to(self.device)
 
@@ -386,8 +419,8 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
                     obs, _, dones, infos = self.env.step(actions_student.detach().to(self.env.device))
                     # Move to device
                     obs, dones = (obs.to(self.device), dones.to(self.device))
-                additional_obs['delta_yaw_ok'] = infos["observations"]['delta_yaw_ok']
-                additional_obs['depth_camera'] = infos["observations"]['depth_camera']
+                additional_obs["delta_yaw_ok"] = infos["observations"]["delta_yaw_ok"].to(self.device).squeeze(-1)
+                additional_obs["depth_camera"] = infos["observations"]["depth_camera"].to(self.device)
                 # perform normalization
                 obs = self.obs_normalizer(obs)
                 if self.log_dir is not None:

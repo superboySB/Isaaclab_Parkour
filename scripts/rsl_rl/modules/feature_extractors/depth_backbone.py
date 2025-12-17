@@ -57,12 +57,27 @@ class RecurrentDepthBackbone(nn.Module):
                                 last_activation
                             )
         self.hidden_states = torch.zeros(1, 0, 512)
+        self._hidden_states_initialized = False
         self.rnn.flatten_parameters()
 
     def forward(self, depth_image, proprioception):
-        if self.hidden_states.shape[1] == 0:
-            # On the first forward pass, initialize hidden states to proper batch size
-            self.hidden_states = torch.zeros(1, depth_image.shape[0], self.recurrent_size).to(depth_image.device)
+        if not self._hidden_states_initialized:
+            self.hidden_states = torch.zeros(
+                1,
+                depth_image.shape[0],
+                self.recurrent_size,
+                device=depth_image.device,
+                dtype=depth_image.dtype,
+            )
+            self._hidden_states_initialized = True
+        elif self.hidden_states.shape[1] != depth_image.shape[0]:
+            self.hidden_states = torch.zeros(
+                1,
+                depth_image.shape[0],
+                self.recurrent_size,
+                device=depth_image.device,
+                dtype=depth_image.dtype,
+            )
 
         depth_image = self.base_backbone(depth_image)
         depth_latent = self.combination_mlp(torch.cat((depth_image, proprioception), dim=-1))

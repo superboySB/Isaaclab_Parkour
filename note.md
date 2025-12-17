@@ -18,7 +18,6 @@ cd parkour_tasks && pip3 install -e .
 ```
 
 默认跳过已存在文件，如需重新下载可加 `--force`。下载完成后，`play/eval/demo/train` 都会自动引用本地 `assets/nucleus/Isaac/4.5/Isaac/IsaacLab/Robots/Unitree/Go2/` 目录，无需联网。
-```
 
 ## 直接看预训练结果
 `assets/` 目录里已经下好了对应 checkpoint：

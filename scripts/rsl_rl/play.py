@@ -28,6 +28,12 @@ parser.add_argument("--video_length", type=int, default=500, help="Length of the
 parser.add_argument(
     "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
 )
+parser.add_argument(
+    "--disable_debug_vis",
+    action="store_true",
+    default=False,
+    help="Disable debug visualization (markers/depth viewer) for better performance.",
+)
 parser.add_argument("--num_envs", type=int, default=1, help="Number of environments to simulate.")
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument(
@@ -40,6 +46,18 @@ parser.add_argument(
     "--use_pretrained_checkpoint",
     action="store_true",
     help="Use the pre-trained checkpoint from Nucleus.",
+)
+parser.add_argument(
+    "--skip_export",
+    action="store_true",
+    default=False,
+    help="Skip exporting JIT/ONNX models on startup.",
+)
+parser.add_argument(
+    "--force_export",
+    action="store_true",
+    default=False,
+    help="Force re-export JIT/ONNX models even if they already exist.",
 )
 parser.add_argument("--real-time", action="store_true", default=False, help="Run in real-time, if possible.")
 # append RSL-RL cli arguments
@@ -89,6 +107,23 @@ def main():
     env_cfg = parse_env_cfg(
         args_cli.task, device=args_cli.device, num_envs=args_cli.num_envs, use_fabric=not args_cli.disable_fabric
     )
+    if args_cli.disable_debug_vis:
+        commands_cfg = getattr(env_cfg, "commands", None)
+        base_velocity_cfg = getattr(commands_cfg, "base_velocity", None)
+        if base_velocity_cfg is not None and hasattr(base_velocity_cfg, "debug_vis"):
+            base_velocity_cfg.debug_vis = False
+
+        parkours_cfg = getattr(env_cfg, "parkours", None)
+        base_parkour_cfg = getattr(parkours_cfg, "base_parkour", None)
+        if base_parkour_cfg is not None and hasattr(base_parkour_cfg, "debug_vis"):
+            base_parkour_cfg.debug_vis = False
+
+        observations_cfg = getattr(env_cfg, "observations", None)
+        depth_group_cfg = getattr(observations_cfg, "depth_camera", None)
+        depth_term_cfg = getattr(depth_group_cfg, "depth_cam", None)
+        params = getattr(depth_term_cfg, "params", None)
+        if isinstance(params, dict) and "debug_vis" in params:
+            params["debug_vis"] = False
     agent_cfg: ParkourRslRlOnPolicyRunnerCfg = cli_args.parse_rsl_rl_cfg(args_cli.task, args_cli)
 
     # specify directory for logging experiments
@@ -164,35 +199,52 @@ def main():
     # obtain the trained policy for inference
 
     estimator = ppo_runner.get_estimator_inference_policy(device=env.device) 
+    def _should_export(export_dir: str, filenames: list[str]) -> bool:
+        if args_cli.skip_export:
+            return False
+        if args_cli.force_export:
+            return True
+        return any(not os.path.exists(os.path.join(export_dir, name)) for name in filenames)
+
     if agent_cfg.algorithm.class_name == "DistillationWithExtractor":
         policy = ppo_runner.get_inference_depth_policy(device=env.unwrapped.device)
         depth_encoder = ppo_runner.get_depth_encoder_inference_policy(device=env.device)
         policy_nn = ppo_runner.alg.depth_actor
         export_model_dir = os.path.join(os.path.dirname(resume_path), "exported_deploy")
-        export_deploy_policy_as_jit(policy_nn, 
-                                    estimator,
-                                    depth_encoder,
-                                    ppo_runner.obs_normalizer, 
-                                    path=export_model_dir, 
-                                    filename="policy.pt")
-        export_deploy_policy_as_onnx(
-                            policy_nn, 
-                            estimator,
-                            depth_encoder,
-                            agent_cfg,
-                            normalizer=ppo_runner.obs_normalizer, 
-                            path=export_model_dir, 
-                            filename="policy.onnx"
-                        )
+        deploy_exports = ["policy.pt", "policy.onnx", "depth_latest.pt", "depth_latest.onnx"]
+        if _should_export(export_model_dir, deploy_exports):
+            export_deploy_policy_as_jit(
+                policy_nn,
+                estimator,
+                depth_encoder,
+                ppo_runner.obs_normalizer,
+                path=export_model_dir,
+                filename="policy.pt",
+            )
+            export_deploy_policy_as_onnx(
+                policy_nn,
+                estimator,
+                depth_encoder,
+                agent_cfg,
+                normalizer=ppo_runner.obs_normalizer,
+                path=export_model_dir,
+                filename="policy.onnx",
+            )
+        else:
+            print(f"[INFO] Exported models already exist at: {export_model_dir}. Skipping export.")
 
     else:
         policy = ppo_runner.get_inference_policy(device=env.unwrapped.device)
         policy_nn = ppo_runner.alg.policy
         export_model_dir = os.path.join(os.path.dirname(resume_path), "exported_teacher")
-        export_teacher_policy_as_jit(policy_nn, ppo_runner.obs_normalizer, path=export_model_dir, filename="policy.pt")
-        export_teacher_policy_as_onnx(
-            policy_nn, normalizer=ppo_runner.obs_normalizer, path=export_model_dir, filename="policy.onnx"
-        )
+        teacher_exports = ["policy.pt", "policy.onnx"]
+        if _should_export(export_model_dir, teacher_exports):
+            export_teacher_policy_as_jit(policy_nn, ppo_runner.obs_normalizer, path=export_model_dir, filename="policy.pt")
+            export_teacher_policy_as_onnx(
+                policy_nn, normalizer=ppo_runner.obs_normalizer, path=export_model_dir, filename="policy.onnx"
+            )
+        else:
+            print(f"[INFO] Exported models already exist at: {export_model_dir}. Skipping export.")
 
     dt = env.unwrapped.step_dt
     estimator_paras = agent_cfg.to_dict()["estimator"]
