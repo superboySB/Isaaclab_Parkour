@@ -97,6 +97,7 @@ from scripts.rsl_rl.checkpoint_paths import get_local_pretrained_checkpoint
 from scripts.rsl_rl.vecenv_wrapper import ParkourRslRlVecEnvWrapper
 
 import isaaclab_tasks  # noqa: F401
+import parkour_tasks  # noqa: F401
 from isaaclab_tasks.utils import get_checkpoint_path, parse_env_cfg
 
 

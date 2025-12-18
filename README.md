@@ -97,12 +97,6 @@ python scripts/rsl_rl/demo.py --task Isaac-Extreme-Parkour-Teacher-Unitree-Go2-P
 python scripts/rsl_rl/demo.py --task Isaac-Extreme-Parkour-Student-Unitree-Go2-Play-v0 
 ```
 
-## Testing your modules
-
-```
-cd parkour_test/ ## You can test your modules in here
-```
-
 ## Visualize Control (ParkourViewportCameraController)
 
 ```

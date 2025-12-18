@@ -13,8 +13,42 @@ bash install.sh
 
 # bash install.sh uninstall
 ```
-
 本仓库已包含 GO2 机器人完整资产（含天空 HDR、瓷砖材质、UI Arrow 等）与预训练 checkpoint；`play/train` 会自动引用本地 `assets/nucleus/Isaac/4.5/Isaac/IsaacLab/Robots/Unitree/Go2/` 目录，无需联网。
+
+## 运行所需文件（Teacher/Student 的 train & play）
+> 下面只列“本仓库内”的关键文件/产物位置；IsaacLab/IsaacSim/rsl-rl-lib 等依赖不在此列表。
+
+### 入口脚本（RSL-RL）
+- 训练入口：`scripts/rsl_rl/train.py`
+- 推理/可视化入口：`scripts/rsl_rl/play.py`
+- CLI 与胶水层：`scripts/rsl_rl/cli_args.py`、`scripts/rsl_rl/vecenv_wrapper.py`
+- PPO/蒸馏实现：`scripts/rsl_rl/modules/**`
+
+### Task/Env 配置（Gym 注册 + Hydra/RSL 配置入口）
+- 环境注册：`parkour_tasks/parkour_tasks/extreme_parkour_task/config/go2/__init__.py`
+- Teacher env cfg：`parkour_tasks/parkour_tasks/extreme_parkour_task/config/go2/parkour_teacher_cfg.py`
+- Student env cfg：`parkour_tasks/parkour_tasks/extreme_parkour_task/config/go2/parkour_student_cfg.py`
+- MDP（观测/奖励/事件/动作/终止）：`parkour_tasks/parkour_tasks/extreme_parkour_task/config/go2/parkour_mdp_cfg.py`
+- Teacher PPO cfg：`parkour_tasks/parkour_tasks/extreme_parkour_task/config/go2/agents/rsl_teacher_ppo_cfg.py`
+- Student PPO cfg：`parkour_tasks/parkour_tasks/extreme_parkour_task/config/go2/agents/rsl_student_ppo_cfg.py`
+
+### Env 实现（ManagerBasedRLEnv + MDP 具体实现）
+- 环境：`parkour_isaaclab/envs/**`
+- MDP：`parkour_isaaclab/envs/mdp/**`
+- 地形：`parkour_isaaclab/terrains/**`
+- 管理器：`parkour_isaaclab/managers/**`
+- 执行器/电机：`parkour_isaaclab/actuators/**`
+
+### 资产与权重
+- 本地 GO2/材质等离线资源：`assets/nucleus/Isaac/4.5/Isaac/**`
+- 深度相机 USD：`parkour_tasks/parkour_tasks/extreme_parkour_task/config/go2/agents/d435.usd`
+- Teacher 预训练（可选，用于 `--use_pretrained_checkpoint` 或 Student 蒸馏加载）：`assets/pretrained_teacher/model_*.pt`
+- Student 预训练（可选，用于 `--use_pretrained_checkpoint`）：`assets/pretrained_student/model_*.pt`
+- 深度调试窗口脚本（仅 debug_vis 打开时需要）：`scripts/depth_debug_viewer.py`
+
+### play.py 导出产物（自动生成）
+- Teacher：`<log_dir>/exported_teacher/policy.pt`、`<log_dir>/exported_teacher/policy.onnx`
+- Student/Deploy：`<log_dir>/exported_deploy/policy.pt`、`policy.onnx`、`depth_latest.pt`、`depth_latest.onnx`
 
 ## 直接看预训练结果
 `assets/` 目录里已经下好了对应 checkpoint：
