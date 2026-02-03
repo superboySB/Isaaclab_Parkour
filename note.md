@@ -3,7 +3,37 @@
 ![](assets/intro.png)
 
 ## 配置
-在zuanfeng项目的docker内部安装一波环境吧
+先在本项目构建镜像，再启动容器（镜像和容器名都叫 `parkour`）。注意：`docker run` 不要 `-v` 挂载本项目代码，进入容器后再 `git clone`。
+```sh
+docker build -f docker/simulation.dockerfile \
+  --build-arg ISAACSIM_VERSION=5.1.0 \
+  --build-arg ISAACLAB_REPO=https://github.com/isaac-sim/IsaacLab.git \
+  --build-arg ISAACLAB_REF=v2.3.0 \
+  --network=host --progress=plain \
+  -t "parkour image" .
+
+xhost +local:root
+
+docker run --name parkour-demo -itd --privileged --gpus all --network host \
+  --entrypoint bash \
+  -e ACCEPT_EULA=Y -e PRIVACY_CONSENT=Y \
+  -e DISPLAY -e QT_X11_NO_MITSHM=1 \
+  -v $HOME/.Xauthority:/root/.Xauthority \
+  -v /tmp/.X11-unix:/tmp/.X11-unix \
+  -v ~/docker/isaac-sim-5.1/cache/kit:/isaac-sim/kit/cache:rw \
+  -v ~/docker/isaac-sim-5.1/cache/ov:/root/.cache/ov:rw \
+  -v ~/docker/isaac-sim-5.1/cache/pip:/root/.cache/pip:rw \
+  -v ~/docker/isaac-sim-5.1/cache/glcache:/root/.cache/nvidia/GLCache:rw \
+  -v ~/docker/isaac-sim-5.1/cache/computecache:/root/.nv/ComputeCache:rw \
+  -v ~/docker/isaac-sim-5.1/logs:/root/.nvidia-omniverse/logs:rw \
+  -v ~/docker/isaac-sim-5.1/data:/root/.local/share/ov/data:rw \
+  -v ~/docker/isaac-sim-5.1/documents:/root/Documents:rw \
+  "parkour image"
+
+docker exec -it parkour-demo /bin/bash
+```
+
+进入容器后再装：
 ```sh
 cd /workspace/isaaclab
 
@@ -18,7 +48,6 @@ cd parkour_tasks && pip3 install -e .
 ```
 
 默认跳过已存在文件，如需重新下载可加 `--force`。下载完成后，`play/eval/demo/train` 都会自动引用本地 `assets/nucleus/Isaac/4.5/Isaac/IsaacLab/Robots/Unitree/Go2/` 目录，无需联网。
-```
 
 ## 直接看预训练结果
 `assets/` 目录里已经下好了对应 checkpoint：
