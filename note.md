@@ -10,7 +10,7 @@ docker build -f docker/simulation.dockerfile \
   --build-arg ISAACLAB_REPO=https://github.com/isaac-sim/IsaacLab.git \
   --build-arg ISAACLAB_REF=v2.3.0 \
   --network=host --progress=plain \
-  -t "parkour image" .
+  -t parkour_image:v0 .
 
 xhost +local:root
 
@@ -28,7 +28,7 @@ docker run --name parkour-demo -itd --privileged --gpus all --network host \
   -v ~/docker/isaac-sim-5.1/logs:/root/.nvidia-omniverse/logs:rw \
   -v ~/docker/isaac-sim-5.1/data:/root/.local/share/ov/data:rw \
   -v ~/docker/isaac-sim-5.1/documents:/root/Documents:rw \
-  "parkour image"
+  parkour_image:v0
 
 docker exec -it parkour-demo /bin/bash
 ```
