@@ -189,6 +189,10 @@ class ActorCriticRMA(nn.Module):
     def reset(self, dones=None):
         pass
 
+    def update_normalization(self, obs):
+        # Normalization is handled externally in the runner for this policy.
+        return
+
     def forward(self):
         raise NotImplementedError
 

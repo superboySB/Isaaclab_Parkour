@@ -89,29 +89,29 @@ python scripts/rsl_rl/demo.py --task Isaac-Extreme-Parkour-Student-Unitree-Go2-P
 
 ## 重新训练两阶段
 1. **Teacher：先训老师拿到参考权重**  
-   ```sh
-   python scripts/rsl_rl/train.py \
-     --task Isaac-Extreme-Parkour-Teacher-Unitree-Go2-v0 \
-     --seed 1 --headless \
-     --run_name teacher_seed1
-   ```  
-   - 日志会保存在 `logs/rsl_rl/unitree_go2_parkour/<timestamp>_teacher_seed1/`。  
-   - 训练过程中每 `save_interval(=100)` 轮会生成 `model_<iter>.pt`，结束时还会写入 `model_50000.pt`（最后一次迭代）。脚本不会自动挑 “最优” checkpoint，需要你根据 `evaluation.py` 的指标手动挑一个，例如 `model_48000.pt` 或 `model_50000.pt`。  
-   - 对任意 checkpoint 运行 `python scripts/rsl_rl/evaluation.py --task Isaac-Extreme-Parkour-Teacher-Unitree-Go2-Eval-v0 --checkpoint logs/rsl_rl/unitree_go2_parkour/<run>/model_50000.pt` 来验证。
+```sh
+python scripts/rsl_rl/train.py \
+  --task Isaac-Extreme-Parkour-Teacher-Unitree-Go2-v0 \
+  --seed 1 --headless \
+  --run_name teacher_seed1
+```  
+- 日志会保存在 `logs/rsl_rl/unitree_go2_parkour/<timestamp>_teacher_seed1/`。  
+- 训练过程中每 `save_interval(=100)` 轮会生成 `model_<iter>.pt`，结束时还会写入 `model_50000.pt`（最后一次迭代）。脚本不会自动挑 “最优” checkpoint，需要你根据 `evaluation.py` 的指标手动挑一个，例如 `model_48000.pt` 或 `model_50000.pt`。  
+- 对任意 checkpoint 运行 `python scripts/rsl_rl/evaluation.py --task Isaac-Extreme-Parkour-Teacher-Unitree-Go2-Eval-v0 --checkpoint logs/rsl_rl/unitree_go2_parkour/<run>/model_50000.pt` 来验证。
 
 2. **Student：蒸馏阶段需要加载老师 checkpoint**  
-   ```sh
-   python scripts/rsl_rl/train.py \
-     --task Isaac-Extreme-Parkour-Student-Unitree-Go2-v0 \
-     --seed 1 --headless \
-     --run_name student_seed1 \
-     --checkpoint /workspace/isaaclab/Isaaclab_Parkour/assets/pretrained_teacher/model_49999.pt
-   ```  
-   - 现在可以直接把老师 `model_*.pt` 的绝对路径传给 `--checkpoint`，脚本会自动判定并加载，不再强制要求 `--load_run`。如果仍想用旧方式指定目录，也可以保留 `--load_run` + `--checkpoint model_50000.pt` 的组合。  
-   - 学生配置的算法是 `DistillationWithExtractor`，`train.py` 会在启动新日志前先加载这个老师 checkpoint，然后再开始学生训练。后续学生的 checkpoint 同样写到 `logs/rsl_rl/unitree_go2_parkour/<timestamp>_student_seed1/model_*.pt`。
+```sh
+python scripts/rsl_rl/train.py \
+  --task Isaac-Extreme-Parkour-Student-Unitree-Go2-v0 \
+  --seed 1 --headless \
+  --run_name student_seed1 \
+  --checkpoint /workspace/isaaclab/Isaaclab_Parkour/assets/pretrained_teacher/model_49999.pt
+```  
+- 现在可以直接把老师 `model_*.pt` 的绝对路径传给 `--checkpoint`，脚本会自动判定并加载，不再强制要求 `--load_run`。如果仍想用旧方式指定目录，也可以保留 `--load_run` + `--checkpoint model_50000.pt` 的组合。  
+- 学生配置的算法是 `DistillationWithExtractor`，`train.py` 会在启动新日志前先加载这个老师 checkpoint，然后再开始学生训练。后续学生的 checkpoint 同样写到 `logs/rsl_rl/unitree_go2_parkour/<timestamp>_student_seed1/model_*.pt`。
 
 3. **评估或导出**  
-   - 训完老师或学生后，使用 `play.py / evaluation.py / demo.py` 并通过 `--log_root` + `--checkpoint` 指向这些新日志，就能直接在本地查看表现，步骤与前述“预训练结果”一致。
+- 训完老师或学生后，使用 `play.py / evaluation.py / demo.py` 并通过 `--log_root` + `--checkpoint` 指向这些新日志，就能直接在本地查看表现，步骤与前述“预训练结果”一致。
 
 > 说明：训练脚本默认关闭 git diff 记录和任何联网操作，日志只写入本地的 `logs/rsl_rl/...`。如需恢复 git 状态快照，可手动设置 `ISAACLAB_ENABLE_GIT_STATE=1` 再运行。
 
