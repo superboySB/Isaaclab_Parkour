@@ -60,6 +60,8 @@ cd parkour_tasks && pip3 install -e .
 
 Teacher 预训练结果（直接用 assets）：
 ```sh
+cd /workspace/isaaclab/Isaaclab_Parkour
+
 python scripts/rsl_rl/play.py --task Isaac-Extreme-Parkour-Teacher-Unitree-Go2-Play-v0 --num_envs 1 --use_pretrained_checkpoint
 
 python scripts/rsl_rl/evaluation.py --task Isaac-Extreme-Parkour-Teacher-Unitree-Go2-Eval-v0 --use_pretrained_checkpoint
@@ -69,6 +71,8 @@ python scripts/rsl_rl/demo.py --task Isaac-Extreme-Parkour-Teacher-Unitree-Go2-P
 
 Student（蒸馏）预训练结果（直接用 assets）：
 ```sh
+cd /workspace/isaaclab/Isaaclab_Parkour
+
 python scripts/rsl_rl/play.py --task Isaac-Extreme-Parkour-Student-Unitree-Go2-Play-v0 --num_envs 1 --use_pretrained_checkpoint
 
 python scripts/rsl_rl/evaluation.py --task Isaac-Extreme-Parkour-Student-Unitree-Go2-Eval-v0 --use_pretrained_checkpoint
