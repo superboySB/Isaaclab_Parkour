@@ -8,10 +8,38 @@ import argparse
 import os
 import sys
 import weakref
+from pathlib import Path
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
+
+def _find_isaacsim_python_sh() -> str | None:
+    candidates: list[Path] = []
+    env_root = os.environ.get("ISAACLAB_PATH")
+    if env_root:
+        candidates.append(Path(env_root) / "_isaac_sim" / "python.sh")
+    candidates.append(Path(PROJECT_ROOT).parent / "isaaclab" / "_isaac_sim" / "python.sh")
+    candidates.append(Path(PROJECT_ROOT) / "_isaac_sim" / "python.sh")
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
+def _reexec_with_isaacsim_python() -> None:
+    if os.environ.get("ISAACSIM_REEXEC") == "1":
+        return
+    if sys.version_info[:2] == (3, 11):
+        return
+    python_sh = _find_isaacsim_python_sh()
+    if not python_sh:
+        return
+    os.environ["ISAACSIM_REEXEC"] = "1"
+    os.execv(python_sh, [python_sh, os.path.abspath(__file__), *sys.argv[1:]])
+
+
+_reexec_with_isaacsim_python()
 
 import cli_args  # isort: skip
 from isaaclab.app import AppLauncher

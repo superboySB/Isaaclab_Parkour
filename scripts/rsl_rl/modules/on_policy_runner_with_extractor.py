@@ -125,12 +125,16 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
             self.privileged_obs_normalizer = torch.nn.Identity().to(self.device)  # no normalization
         if self.depth_encoder_cfg is None:
 
+            storage_obs = {"policy": obs}
+            if self.privileged_obs_type is not None:
+                storage_obs[self.privileged_obs_type] = extras["observations"][self.privileged_obs_type]
+            if self.alg.rnd and "rnd_state" in extras["observations"]:
+                storage_obs["rnd_state"] = extras["observations"]["rnd_state"]
             self.alg.init_storage(
                 self.training_type,
                 self.env.num_envs,
                 self.num_steps_per_env,
-                [num_obs],
-                [num_privileged_obs],
+                storage_obs,
                 [self.env.num_actions],
             )
 
@@ -179,6 +183,17 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
         obs, extras = self.env.get_observations()
         privileged_obs = extras["observations"].get(self.privileged_obs_type, obs)
         obs, privileged_obs = obs.to(self.device), privileged_obs.to(self.device)
+        # perform normalization
+        obs = self.obs_normalizer(obs)
+        if self.privileged_obs_type is not None:
+            privileged_obs = self.privileged_obs_normalizer(privileged_obs)
+        else:
+            privileged_obs = obs
+        storage_obs = {"policy": obs}
+        if self.privileged_obs_type is not None:
+            storage_obs[self.privileged_obs_type] = privileged_obs
+        if self.alg.rnd and "rnd_state" in extras["observations"]:
+            storage_obs["rnd_state"] = extras["observations"]["rnd_state"].to(self.device)
         self.train_mode()  # switch to train mode (for dropout for example)
 
         # Book keeping
@@ -213,7 +228,7 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
             with torch.inference_mode():
                 for _ in range(self.num_steps_per_env):
                     # Sample actions
-                    actions = self.alg.act(obs, privileged_obs, hist_encoding)
+                    actions = self.alg.act(storage_obs, hist_encoding=hist_encoding)
                     # Step the environment
                     obs, rewards, dones, infos = self.env.step(actions.to(self.env.device))
                     # Move to device
@@ -226,9 +241,14 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
                         )
                     else:
                         privileged_obs = obs
+                    storage_obs = {"policy": obs}
+                    if self.privileged_obs_type is not None:
+                        storage_obs[self.privileged_obs_type] = privileged_obs
+                    if self.alg.rnd and "rnd_state" in infos["observations"]:
+                        storage_obs["rnd_state"] = infos["observations"]["rnd_state"].to(self.device)
 
                     # process the step
-                    self.alg.process_env_step(rewards, dones, infos)
+                    self.alg.process_env_step(storage_obs, rewards, dones, infos)
 
                     # Extract intrinsic rewards (only for logging)
                     intrinsic_rewards = self.alg.intrinsic_rewards if self.alg.rnd else None
@@ -336,7 +356,10 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
 
         obs, extras = self.env.get_observations()
         additional_obs = {}
-        additional_obs["delta_yaw_ok"] = extras['observations']['delta_yaw_ok'].to(self.device)
+        delta_yaw_ok = extras["observations"]["delta_yaw_ok"]
+        if delta_yaw_ok.ndim == 2 and delta_yaw_ok.shape[1] == 1:
+            delta_yaw_ok = delta_yaw_ok.squeeze(-1)
+        additional_obs["delta_yaw_ok"] = delta_yaw_ok.to(self.device)
         additional_obs["depth_camera"] = extras["observations"]['depth_camera'].to(self.device)
         obs = obs.to(self.device)
 
@@ -386,7 +409,10 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
                     obs, _, dones, infos = self.env.step(actions_student.detach().to(self.env.device))
                     # Move to device
                     obs, dones = (obs.to(self.device), dones.to(self.device))
-                additional_obs['delta_yaw_ok'] = infos["observations"]['delta_yaw_ok']
+                delta_yaw_ok = infos["observations"]["delta_yaw_ok"]
+                if delta_yaw_ok.ndim == 2 and delta_yaw_ok.shape[1] == 1:
+                    delta_yaw_ok = delta_yaw_ok.squeeze(-1)
+                additional_obs["delta_yaw_ok"] = delta_yaw_ok
                 additional_obs['depth_camera'] = infos["observations"]['depth_camera']
                 # perform normalization
                 obs = self.obs_normalizer(obs)

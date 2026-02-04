@@ -3,7 +3,37 @@
 ![](assets/intro.png)
 
 ## 配置
-在zuanfeng项目的docker内部安装一波环境吧
+先在本项目构建镜像，再启动容器（镜像和容器名都叫 `parkour`）。注意：`docker run` 不要 `-v` 挂载本项目代码，进入容器后再 `git clone`。
+```sh
+docker build -f docker/simulation.dockerfile \
+  --build-arg ISAACSIM_VERSION=5.1.0 \
+  --build-arg ISAACLAB_REPO=https://github.com/isaac-sim/IsaacLab.git \
+  --build-arg ISAACLAB_REF=v2.3.0 \
+  --network=host --progress=plain \
+  -t parkour_image:v0 .
+
+xhost +local:root
+
+docker run --name parkour-demo -itd --privileged --gpus all --network host \
+  --entrypoint bash \
+  -e ACCEPT_EULA=Y -e PRIVACY_CONSENT=Y \
+  -e DISPLAY -e QT_X11_NO_MITSHM=1 \
+  -v $HOME/.Xauthority:/root/.Xauthority \
+  -v /tmp/.X11-unix:/tmp/.X11-unix \
+  -v ~/docker/isaac-sim-5.1/cache/kit:/isaac-sim/kit/cache:rw \
+  -v ~/docker/isaac-sim-5.1/cache/ov:/root/.cache/ov:rw \
+  -v ~/docker/isaac-sim-5.1/cache/pip:/root/.cache/pip:rw \
+  -v ~/docker/isaac-sim-5.1/cache/glcache:/root/.cache/nvidia/GLCache:rw \
+  -v ~/docker/isaac-sim-5.1/cache/computecache:/root/.nv/ComputeCache:rw \
+  -v ~/docker/isaac-sim-5.1/logs:/root/.nvidia-omniverse/logs:rw \
+  -v ~/docker/isaac-sim-5.1/data:/root/.local/share/ov/data:rw \
+  -v ~/docker/isaac-sim-5.1/documents:/root/Documents:rw \
+  parkour_image:v0
+
+docker exec -it parkour-demo /bin/bash
+```
+
+进入容器后再装：
 ```sh
 cd /workspace/isaaclab
 
@@ -18,7 +48,6 @@ cd parkour_tasks && pip3 install -e .
 ```
 
 默认跳过已存在文件，如需重新下载可加 `--force`。下载完成后，`play/eval/demo/train` 都会自动引用本地 `assets/nucleus/Isaac/4.5/Isaac/IsaacLab/Robots/Unitree/Go2/` 目录，无需联网。
-```
 
 ## 直接看预训练结果
 `assets/` 目录里已经下好了对应 checkpoint：
@@ -31,6 +60,8 @@ cd parkour_tasks && pip3 install -e .
 
 Teacher 预训练结果（直接用 assets）：
 ```sh
+cd /workspace/isaaclab/Isaaclab_Parkour
+
 python scripts/rsl_rl/play.py --task Isaac-Extreme-Parkour-Teacher-Unitree-Go2-Play-v0 --num_envs 1 --use_pretrained_checkpoint
 
 python scripts/rsl_rl/evaluation.py --task Isaac-Extreme-Parkour-Teacher-Unitree-Go2-Eval-v0 --use_pretrained_checkpoint
@@ -40,6 +71,8 @@ python scripts/rsl_rl/demo.py --task Isaac-Extreme-Parkour-Teacher-Unitree-Go2-P
 
 Student（蒸馏）预训练结果（直接用 assets）：
 ```sh
+cd /workspace/isaaclab/Isaaclab_Parkour
+
 python scripts/rsl_rl/play.py --task Isaac-Extreme-Parkour-Student-Unitree-Go2-Play-v0 --num_envs 1 --use_pretrained_checkpoint
 
 python scripts/rsl_rl/evaluation.py --task Isaac-Extreme-Parkour-Student-Unitree-Go2-Eval-v0 --use_pretrained_checkpoint
@@ -56,29 +89,29 @@ python scripts/rsl_rl/demo.py --task Isaac-Extreme-Parkour-Student-Unitree-Go2-P
 
 ## 重新训练两阶段
 1. **Teacher：先训老师拿到参考权重**  
-   ```sh
-   python scripts/rsl_rl/train.py \
-     --task Isaac-Extreme-Parkour-Teacher-Unitree-Go2-v0 \
-     --seed 1 --headless \
-     --run_name teacher_seed1
-   ```  
-   - 日志会保存在 `logs/rsl_rl/unitree_go2_parkour/<timestamp>_teacher_seed1/`。  
-   - 训练过程中每 `save_interval(=100)` 轮会生成 `model_<iter>.pt`，结束时还会写入 `model_50000.pt`（最后一次迭代）。脚本不会自动挑 “最优” checkpoint，需要你根据 `evaluation.py` 的指标手动挑一个，例如 `model_48000.pt` 或 `model_50000.pt`。  
-   - 对任意 checkpoint 运行 `python scripts/rsl_rl/evaluation.py --task Isaac-Extreme-Parkour-Teacher-Unitree-Go2-Eval-v0 --checkpoint logs/rsl_rl/unitree_go2_parkour/<run>/model_50000.pt` 来验证。
+```sh
+python scripts/rsl_rl/train.py \
+  --task Isaac-Extreme-Parkour-Teacher-Unitree-Go2-v0 \
+  --seed 1 --headless \
+  --run_name teacher_seed1
+```  
+- 日志会保存在 `logs/rsl_rl/unitree_go2_parkour/<timestamp>_teacher_seed1/`。  
+- 训练过程中每 `save_interval(=100)` 轮会生成 `model_<iter>.pt`，结束时还会写入 `model_50000.pt`（最后一次迭代）。脚本不会自动挑 “最优” checkpoint，需要你根据 `evaluation.py` 的指标手动挑一个，例如 `model_48000.pt` 或 `model_50000.pt`。  
+- 对任意 checkpoint 运行 `python scripts/rsl_rl/evaluation.py --task Isaac-Extreme-Parkour-Teacher-Unitree-Go2-Eval-v0 --checkpoint logs/rsl_rl/unitree_go2_parkour/<run>/model_50000.pt` 来验证。
 
 2. **Student：蒸馏阶段需要加载老师 checkpoint**  
-   ```sh
-   python scripts/rsl_rl/train.py \
-     --task Isaac-Extreme-Parkour-Student-Unitree-Go2-v0 \
-     --seed 1 --headless \
-     --run_name student_seed1 \
-     --checkpoint /workspace/isaaclab/Isaaclab_Parkour/assets/pretrained_teacher/model_49999.pt
-   ```  
-   - 现在可以直接把老师 `model_*.pt` 的绝对路径传给 `--checkpoint`，脚本会自动判定并加载，不再强制要求 `--load_run`。如果仍想用旧方式指定目录，也可以保留 `--load_run` + `--checkpoint model_50000.pt` 的组合。  
-   - 学生配置的算法是 `DistillationWithExtractor`，`train.py` 会在启动新日志前先加载这个老师 checkpoint，然后再开始学生训练。后续学生的 checkpoint 同样写到 `logs/rsl_rl/unitree_go2_parkour/<timestamp>_student_seed1/model_*.pt`。
+```sh
+python scripts/rsl_rl/train.py \
+  --task Isaac-Extreme-Parkour-Student-Unitree-Go2-v0 \
+  --seed 1 --headless \
+  --run_name student_seed1 \
+  --checkpoint /workspace/isaaclab/Isaaclab_Parkour/assets/pretrained_teacher/model_49999.pt
+```  
+- 现在可以直接把老师 `model_*.pt` 的绝对路径传给 `--checkpoint`，脚本会自动判定并加载，不再强制要求 `--load_run`。如果仍想用旧方式指定目录，也可以保留 `--load_run` + `--checkpoint model_50000.pt` 的组合。  
+- 学生配置的算法是 `DistillationWithExtractor`，`train.py` 会在启动新日志前先加载这个老师 checkpoint，然后再开始学生训练。后续学生的 checkpoint 同样写到 `logs/rsl_rl/unitree_go2_parkour/<timestamp>_student_seed1/model_*.pt`。
 
 3. **评估或导出**  
-   - 训完老师或学生后，使用 `play.py / evaluation.py / demo.py` 并通过 `--log_root` + `--checkpoint` 指向这些新日志，就能直接在本地查看表现，步骤与前述“预训练结果”一致。
+- 训完老师或学生后，使用 `play.py / evaluation.py / demo.py` 并通过 `--log_root` + `--checkpoint` 指向这些新日志，就能直接在本地查看表现，步骤与前述“预训练结果”一致。
 
 > 说明：训练脚本默认关闭 git diff 记录和任何联网操作，日志只写入本地的 `logs/rsl_rl/...`。如需恢复 git 状态快照，可手动设置 `ISAACLAB_ENABLE_GIT_STATE=1` 再运行。
 

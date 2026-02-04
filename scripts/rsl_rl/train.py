@@ -87,7 +87,18 @@ from isaaclab.envs import (
     multi_agent_to_single_agent,
 )
 from isaaclab.utils.dict import print_dict
-from isaaclab.utils.io import dump_pickle, dump_yaml
+from isaaclab.utils.io import dump_yaml
+try:
+    from isaaclab.utils.io import dump_pickle
+except ImportError:
+    import pickle
+
+    def dump_pickle(filename: str, data):
+        if not filename.endswith("pkl"):
+            filename += ".pkl"
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
+        with open(filename, "wb") as f:
+            pickle.dump(data, f)
 from parkour_tasks.extreme_parkour_task.config.go2.agents.parkour_rl_cfg import ParkourRslRlOnPolicyRunnerCfg
 from scripts.rsl_rl.vecenv_wrapper import ParkourRslRlVecEnvWrapper
 # import isaaclab_tasks  # noqa: F401
